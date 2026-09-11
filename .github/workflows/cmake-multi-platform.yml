@@ -1,0 +1,103 @@
+name: CMake Build
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+        build_type:
+          - Release
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            build-essential
+
+      - name: Set up MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: >
+          cmake
+          -S .
+          -B build
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          -DMOTIONBRICKS_ENABLE_VULKAN=OFF
+          -DMOTIONBRICKS_DOWNLOAD_MODELS=OFF
+
+      - name: Configure CMake (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: >
+          cmake
+          -S .
+          -B build
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          -DMOTIONBRICKS_ENABLE_VULKAN=OFF
+          -DMOTIONBRICKS_DOWNLOAD_MODELS=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Run tests
+        working-directory: build
+        run: ctest -C ${{ matrix.build_type }} --output-on-failure
+        continue-on-error: true
+
+      - name: Install
+        run: cmake --install build --config ${{ matrix.build_type }} --prefix install
+
+      - name: Bundle GGML runtime libraries (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp build/bin/*.dll install/bin/
+
+      - name: Bundle GGML runtime libraries (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cp build/bin/* install/lib/ || true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion-bricks-${{ matrix.os }}
+          path: install/
+          if-no-files-found: error

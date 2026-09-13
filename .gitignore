@@ -13,6 +13,8 @@
 # MotionForge ships these to Blender as the Kimodo runtime - keep them.
 !blender-runtime/*.dll
 !blender-runtime/*.exe
+!blender-runtime/cpu-fallback/*.dll
+!blender-runtime/cpu-fallback/*.exe
 
 # Nix and local development state
 /result

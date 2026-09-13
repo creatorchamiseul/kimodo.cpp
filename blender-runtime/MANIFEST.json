@@ -1,0 +1,32 @@
+{
+  "format": "kimodo-runtime-manifest-v1",
+  "repository": "creatorchamiseul/kimodo.cpp",
+  "runtime": "kimodo.cpp windows x64, CPU backend, built with MSVC 2022, ggml pinned at 8c63e70982c95ceb862e3a1073a2c1beef75d60a",
+  "files": [
+    {
+      "path": "kimodo.dll",
+      "bytes": 218624,
+      "sha256": "65dd23feaa71cbac3bc48960f3d55109d68b60d2e4e1eaf0fa70f4d8a08a4d4c"
+    },
+    {
+      "path": "ggml.dll",
+      "bytes": 67072,
+      "sha256": "fcaab15f35088733a709857406549c0829821665fd53d1885d9a8edf529d278c"
+    },
+    {
+      "path": "ggml-base.dll",
+      "bytes": 651776,
+      "sha256": "f653a76ebdad87893bf7f3c5dfbd830b21ed85d65536adc9e66c2a0088492361"
+    },
+    {
+      "path": "ggml-cpu.dll",
+      "bytes": 804352,
+      "sha256": "9161d608feda79615bc37488173d7f4731282d2032079d1f0ffc6f8e8100a8ae"
+    },
+    {
+      "path": "kmd-generate.exe",
+      "bytes": 61952,
+      "sha256": "2010f6e3851b74b5733017896dae61533c843753519fb3e539d72b8b126d8704"
+    }
+  ]
+}

@@ -1,17 +1,17 @@
 {
   "format": "kimodo-runtime-manifest-v1",
   "repository": "creatorchamiseul/kimodo.cpp",
-  "runtime": "kimodo.cpp windows x64, CPU backend, built with MSVC 2022, ggml pinned at 8c63e70982c95ceb862e3a1073a2c1beef75d60a",
+  "runtime": "kimodo.cpp windows x64, Vulkan GPU backend with CPU fallback (KIMODO_BACKEND=cpu forces CPU), built with MSVC 2022, ggml pinned at 8c63e70982c95ceb862e3a1073a2c1beef75d60a",
   "files": [
     {
       "path": "kimodo.dll",
-      "bytes": 218624,
-      "sha256": "65dd23feaa71cbac3bc48960f3d55109d68b60d2e4e1eaf0fa70f4d8a08a4d4c"
+      "bytes": 219136,
+      "sha256": "72fb02b98b4754f4ef5cbccf7a219affe7c387926b619dce6283c9d3bbc5fb9d"
     },
     {
       "path": "ggml.dll",
       "bytes": 67072,
-      "sha256": "fcaab15f35088733a709857406549c0829821665fd53d1885d9a8edf529d278c"
+      "sha256": "fed0e908a38e730dc0bd3d10dea7128482cf381a278860a69a23f0d6ce0e2c86"
     },
     {
       "path": "ggml-base.dll",
@@ -24,9 +24,39 @@
       "sha256": "9161d608feda79615bc37488173d7f4731282d2032079d1f0ffc6f8e8100a8ae"
     },
     {
+      "path": "ggml-vulkan.dll",
+      "bytes": 54322176,
+      "sha256": "50ded8474086f0a6f4b8a90e20b99239aea6d1a2466e21840c2ee9917ed2ef31"
+    },
+    {
       "path": "kmd-generate.exe",
-      "bytes": 61952,
-      "sha256": "2010f6e3851b74b5733017896dae61533c843753519fb3e539d72b8b126d8704"
+      "bytes": 62976,
+      "sha256": "a1d0248743e73396520d8af25e05528d75040523d6f2c56f8f2151d0f38c5ee0"
+    },
+    {
+      "path": "cpu-fallback/kimodo.dll",
+      "bytes": 218624,
+      "sha256": "33d5247797f5802748d4193e2a04762cf2bde54a1a01b8350e74b2df78c22714"
+    },
+    {
+      "path": "cpu-fallback/ggml.dll",
+      "bytes": 67072,
+      "sha256": "9c71c76bba29f2e032ef1a9e05eccc87e09093e5b7ffc032a208f49fc70e3c1d"
+    },
+    {
+      "path": "cpu-fallback/ggml-base.dll",
+      "bytes": 651776,
+      "sha256": "cf56b97c1dcf527f8bc7db33aceb6e70d2b828c4a2ed789d4c706c42ecb92842"
+    },
+    {
+      "path": "cpu-fallback/ggml-cpu.dll",
+      "bytes": 804352,
+      "sha256": "3f08524642ca6686ac1e17a85ae18cf1adda87ff2a9b5342f6c5ad2ed9da4d1c"
+    },
+    {
+      "path": "cpu-fallback/kmd-generate.exe",
+      "bytes": 62464,
+      "sha256": "1a2221f9e47dc9acfaa1fea54d887baf4afa13f75a403d727a5454d2dee2c801"
     }
   ]
 }

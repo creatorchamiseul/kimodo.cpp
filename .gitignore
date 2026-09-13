@@ -10,6 +10,9 @@
 *.dylib
 *.dll
 *.exe
+# MotionForge ships these to Blender as the Kimodo runtime - keep them.
+!blender-runtime/*.dll
+!blender-runtime/*.exe
 
 # Nix and local development state
 /result

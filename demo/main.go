@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"embed"
 	"encoding/binary"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -24,6 +26,9 @@ import (
 
 //go:embed index.html
 var files embed.FS
+
+//go:embed comparison.html
+var comparisonPage []byte
 
 //go:embed models.js
 var modelUI []byte
@@ -42,6 +47,7 @@ type animation struct {
 	Error            string          `json:"error,omitempty"`
 	Kind             string          `json:"kind"`
 	Model            string          `json:"model"`
+	TextQuantization string          `json:"text_quantization"`
 	Segments         []promptSegment `json:"segments,omitempty"`
 	TransitionFrames int             `json:"transition_frames,omitempty"`
 	Progress         string          `json:"progress,omitempty"`
@@ -65,13 +71,79 @@ type motionModel struct {
 	Offsets     [][3]float32 `json:"offsets"`
 	Motion      string       `json:"-"`
 }
+type textBundle struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Available   bool   `json:"available"`
+	Reason      string `json:"reason,omitempty"`
+	Bytes       int64  `json:"bytes,omitempty"`
+	Path        string `json:"-"`
+}
 type gallery struct {
-	mu                      sync.RWMutex
-	items                   map[string]*animation
-	output                  string
-	queue                   chan string
-	generator, motion, text string
-	models                  map[string]motionModel
+	mu                sync.RWMutex
+	items             map[string]*animation
+	output, generator string
+	queue             chan string
+	models            map[string]motionModel
+	textBundles       map[string]textBundle
+}
+
+type generatorSession struct {
+	key    string
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
+}
+
+func startGeneratorSession(generator string, model motionModel, text textBundle) (*generatorSession, error) {
+	cmd := exec.Command(generator, "--server", model.Motion, text.Path)
+	cmd.Env = append(os.Environ(), "KIMODO_BACKEND=vulkan", "KIMODO_TEXT_LAYER_CHUNK=32", "KIMODO_TEXT_RESIDENT_LIMIT_MIB=10000")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		return nil, err
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return nil, err
+	}
+	return &generatorSession{key: model.Motion + "\x00" + text.Path, cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}, nil
+}
+
+func (session *generatorSession) close() {
+	if session == nil {
+		return
+	}
+	_ = session.stdin.Close()
+	_ = session.cmd.Wait()
+}
+
+func (session *generatorSession) generate(item *animation, dir string, segments []promptSegment, promptPaths []string) error {
+	fields := []string{fmt.Sprint(item.TransitionFrames), fmt.Sprint(item.DiffusionSteps), fmt.Sprint(item.Seed), dir}
+	for index, segment := range segments {
+		fields = append(fields, fmt.Sprint(segment.Frames), promptPaths[index])
+	}
+	if _, err := fmt.Fprintln(session.stdin, strings.Join(fields, "\t")); err != nil {
+		return err
+	}
+	response, err := session.stdout.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("native worker stopped: %w", err)
+	}
+	response = strings.TrimSpace(response)
+	if strings.HasPrefix(response, "ERR\t") {
+		return fmt.Errorf("native worker: %s", strings.TrimPrefix(response, "ERR\t"))
+	}
+	if !strings.HasPrefix(response, "OK\t") {
+		return fmt.Errorf("invalid native worker response %q", response)
+	}
+	return nil
 }
 
 func token() string {
@@ -80,6 +152,18 @@ func token() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+func safePathPart(value string) bool {
+	if value == "" || value == "." || value == ".." {
+		return false
+	}
+	for _, r := range value {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 func (g *gallery) save(a *animation) error {
 	b, err := json.MarshalIndent(a, "", "  ")
@@ -277,6 +361,8 @@ func exportSkeletonGLB(dir, skeletonKey string) error {
 }
 
 func (g *gallery) worker() {
+	var session *generatorSession
+	defer func() { session.close() }()
 	for id := range g.queue {
 		g.mu.Lock()
 		item := g.items[id]
@@ -293,32 +379,48 @@ func (g *gallery) worker() {
 			if !ok || !model.Available {
 				err = fmt.Errorf("model %q is not available", item.Model)
 			} else {
-				segments := item.Segments
-				if len(segments) == 0 {
-					segments = []promptSegment{{Prompt: item.Prompt, Frames: item.Frames}}
+				textID := item.TextQuantization
+				if textID == "" {
+					textID = "q8_0"
 				}
-				args := []string{model.Motion, g.text, "--sequence", fmt.Sprint(item.TransitionFrames), fmt.Sprint(item.DiffusionSteps), fmt.Sprint(item.Seed), dir}
-				for index, segment := range segments {
-					promptPath := filepath.Join(dir, fmt.Sprintf("segment-%02d.txt", index+1))
-					if err = os.WriteFile(promptPath, []byte(segment.Prompt), 0600); err != nil {
-						break
-					}
-					args = append(args, fmt.Sprint(segment.Frames), promptPath)
+				text, textOK := g.textBundles[textID]
+				if !textOK || !text.Available {
+					err = fmt.Errorf("text quantization %q is not available", textID)
 				}
 				if err == nil {
-					g.mu.Lock()
-					item.Progress = fmt.Sprintf("Generating %d conditioned segments", len(segments))
-					_ = g.save(item)
-					g.mu.Unlock()
-					cmd := exec.Command(g.generator, args...)
-					cmd.Env = append(os.Environ(), "KIMODO_BACKEND=vulkan")
-					output, runErr := cmd.CombinedOutput()
-					if runErr != nil {
-						err = fmt.Errorf("sequence: %w: %s", runErr, strings.TrimSpace(string(output)))
+					segments := item.Segments
+					if len(segments) == 0 {
+						segments = []promptSegment{{Prompt: item.Prompt, Frames: item.Frames}}
 					}
-				}
-				if err == nil {
-					err = exportSkeletonGLB(dir, model.SkeletonKey)
+					promptPaths := make([]string, 0, len(segments))
+					for index, segment := range segments {
+						promptPath := filepath.Join(dir, fmt.Sprintf("segment-%02d.txt", index+1))
+						if err = os.WriteFile(promptPath, []byte(segment.Prompt), 0600); err != nil {
+							break
+						}
+						promptPaths = append(promptPaths, promptPath)
+					}
+					if err == nil {
+						g.mu.Lock()
+						item.Progress = fmt.Sprintf("Generating %d conditioned segments", len(segments))
+						_ = g.save(item)
+						g.mu.Unlock()
+						key := model.Motion + "\x00" + text.Path
+						if session == nil || session.key != key {
+							session.close()
+							session, err = startGeneratorSession(g.generator, model, text)
+						}
+						if err == nil {
+							err = session.generate(item, dir, segments, promptPaths)
+							if err != nil {
+								session.close()
+								session = nil
+							}
+						}
+					}
+					if err == nil {
+						err = exportSkeletonGLB(dir, model.SkeletonKey)
+					}
 				}
 			}
 		}
@@ -338,15 +440,27 @@ func (g *gallery) worker() {
 }
 
 func main() {
+	preferPacked := func(packed, legacy string) string {
+		if info, err := os.Stat(packed); err == nil && info.Mode().IsRegular() {
+			return packed
+		}
+		return legacy
+	}
 	addr := flag.String("addr", "127.0.0.1:8090", "listen address")
 	motion := flag.String("motion-model", "models/kimodo-smplx-rp-v1-f32.gguf", "motion GGUF")
 	somaRP := flag.String("soma-rp-model", "models/kimodo-soma-rp-v1.1-f32.gguf", "SOMA RP v1.1 motion GGUF")
 	somaSEED := flag.String("soma-seed-model", "models/kimodo-soma-seed-v1.1-f32.gguf", "SOMA SEED v1.1 motion GGUF")
 	g1RP := flag.String("g1-rp-model", "models/kimodo-g1-rp-v1-f32.gguf", "G1 RP v1 motion GGUF")
 	g1SEED := flag.String("g1-seed-model", "models/kimodo-g1-seed-v1-f32.gguf", "G1 SEED v1 motion GGUF")
-	text := flag.String("text-bundle", "generated/llm2vec-text-bundle", "native LLM2Vec component directory")
+	text := flag.String("text-bundle", preferPacked("Llama-3-Kimodo-BF16.gguf", "generated/llm2vec-text-bundle"), "BF16 LLM2Vec GGUF or legacy component directory")
+	textQ8 := flag.String("text-q8-bundle", preferPacked("Llama-3-Kimodo-Q8_0.gguf", "generated/llm2vec-text-q8_0"), "Q8_0 LLM2Vec GGUF or legacy component directory")
+	textQ6 := flag.String("text-q6-bundle", preferPacked("Llama-3-Kimodo-Q6_K.gguf", "generated/llm2vec-text-q6_k"), "Q6_K LLM2Vec GGUF or legacy component directory")
+	textQ5 := flag.String("text-q5-bundle", preferPacked("Llama-3-Kimodo-Q5_K.gguf", "generated/llm2vec-text-q5_k"), "Q5_K LLM2Vec GGUF or legacy component directory")
+	textQ4 := flag.String("text-q4-bundle", preferPacked("Llama-3-Kimodo-Q4_K.gguf", "generated/llm2vec-text-q4_k"), "Q4_K LLM2Vec GGUF or legacy component directory")
+	textQ4Mixed := flag.String("text-q4-mixed-bundle", preferPacked("Llama-3-Kimodo-Q4_K_M.gguf", "generated/llm2vec-text-q4_k_m"), "mixed Q4_K LLM2Vec GGUF or legacy component directory")
 	generator := flag.String("generator", "build/debug/kmd-generate", "native text-to-motion command")
 	output := flag.String("output", "demo-output", "persistent gallery directory")
+	comparisons := flag.String("comparisons", "quantization-comparisons", "viewer-ready quantization comparison directories")
 	flag.Parse()
 	if err := os.MkdirAll(*output, 0755); err != nil {
 		log.Fatal(err)
@@ -370,7 +484,48 @@ func main() {
 		"g1-rp-v1":       makeModel("g1-rp-v1", "G1 RP v1", "Unitree G1 34 joints", "g1skel34", "nvidia/Kimodo-G1-RP-v1", "NVIDIA Open Model License", openLicense, *g1RP, true),
 		"g1-seed-v1":     makeModel("g1-seed-v1", "G1 SEED v1", "Unitree G1 34 joints", "g1skel34", "nvidia/Kimodo-G1-SEED-v1", "NVIDIA Open Model License", openLicense, *g1SEED, true),
 	}
-	g := &gallery{items: map[string]*animation{}, output: *output, queue: make(chan string, 32), generator: *generator, motion: *motion, text: *text, models: models}
+	makeTextBundle := func(id, label, description, path string) textBundle {
+		bundle := textBundle{ID: id, Label: label, Description: description, Path: path}
+		info, err := os.Stat(path)
+		if err != nil {
+			bundle.Reason = "bundle not found at " + path
+			return bundle
+		}
+		components := []string{path}
+		if info.IsDir() {
+			components, err = filepath.Glob(filepath.Join(path, "*.gguf"))
+			if err != nil || len(components) == 0 {
+				bundle.Reason = "bundle contains no GGUF components"
+				return bundle
+			}
+		} else if info.Mode().IsRegular() && filepath.Ext(path) == ".gguf" {
+			tokenizer := filepath.Join(filepath.Dir(path), "tokenizer.gguf")
+			if tokenizerInfo, statErr := os.Stat(tokenizer); statErr != nil || !tokenizerInfo.Mode().IsRegular() {
+				bundle.Reason = "tokenizer.gguf not found beside " + path
+				return bundle
+			}
+			components = append(components, tokenizer)
+		} else {
+			bundle.Reason = "text model is not a GGUF or component directory"
+			return bundle
+		}
+		for _, component := range components {
+			if componentInfo, statErr := os.Stat(component); statErr == nil {
+				bundle.Bytes += componentInfo.Size()
+			}
+		}
+		bundle.Available = true
+		return bundle
+	}
+	textBundles := map[string]textBundle{
+		"bf16":   makeTextBundle("bf16", "BF16 reference", "Highest-fidelity reference encoder.", *text),
+		"q8_0":   makeTextBundle("q8_0", "Q8_0", "Recommended quantized encoder; closest measured agreement with BF16.", *textQ8),
+		"q6_k":   makeTextBundle("q6_k", "Q6_K", "Smaller experimental encoder with increased motion divergence.", *textQ6),
+		"q5_k":   makeTextBundle("q5_k", "Q5_K", "Experimental; some prompt/noise pairs enter a different trajectory basin.", *textQ5),
+		"q4_k":   makeTextBundle("q4_k", "Q4_K", "Experimental uniform four-bit encoder with substantial measured divergence.", *textQ4),
+		"q4_k_m": makeTextBundle("q4_k_m", "Q4_K mixed", "Experimental mixed-bit profile that improves on uniform Q4_K.", *textQ4Mixed),
+	}
+	g := &gallery{items: map[string]*animation{}, output: *output, queue: make(chan string, 32), generator: *generator, models: models, textBundles: textBundles}
 	entries, _ := filepath.Glob(filepath.Join(*output, "*.json"))
 	for _, path := range entries {
 		b, err := os.ReadFile(path)
@@ -379,6 +534,9 @@ func main() {
 		}
 		var a animation
 		if json.Unmarshal(b, &a) == nil {
+			if a.TextQuantization == "" {
+				a.TextQuantization = "bf16"
+			}
 			g.items[a.ID] = &a
 			if a.Status == "ready" {
 				model, ok := models[a.Model]
@@ -405,6 +563,51 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(index)
 	})
+	mux.HandleFunc("/compare", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/compare" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(comparisonPage)
+	})
+	mux.HandleFunc("/api/comparisons", func(w http.ResponseWriter, r *http.Request) {
+		entries, _ := os.ReadDir(*comparisons)
+		result := make([]json.RawMessage, 0, len(entries))
+		for _, entry := range entries {
+			if !entry.IsDir() || !safePathPart(entry.Name()) {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(*comparisons, entry.Name(), "comparison.json"))
+			if err == nil && json.Valid(data) {
+				result = append(result, data)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+	})
+	mux.HandleFunc("/api/comparisons/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/comparisons/"), "/")
+		if len(parts) < 2 || len(parts) > 3 || !safePathPart(parts[0]) {
+			http.NotFound(w, r)
+			return
+		}
+		var path string
+		if len(parts) == 2 && parts[1] == "comparison.json" {
+			path = filepath.Join(*comparisons, parts[0], "comparison.json")
+			w.Header().Set("Content-Type", "application/json")
+		} else if len(parts) == 3 && safePathPart(parts[1]) &&
+			(parts[2] == "root_positions.f32" || parts[2] == "local_rotations_xyzw.f32") {
+			path = filepath.Join(*comparisons, parts[0], parts[1], parts[2])
+			w.Header().Set("Content-Type", "application/octet-stream")
+		} else {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFile(w, r, path)
+	})
 	mux.HandleFunc("/localai.png", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
@@ -428,6 +631,15 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(result)
 	})
+	mux.HandleFunc("/api/text-quantizations", func(w http.ResponseWriter, r *http.Request) {
+		order := []string{"bf16", "q8_0", "q6_k", "q5_k", "q4_k", "q4_k_m"}
+		result := make([]textBundle, 0, len(order))
+		for _, id := range order {
+			result = append(result, g.textBundles[id])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+	})
 	mux.HandleFunc("/api/generate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -442,6 +654,7 @@ func main() {
 			Steps            int             `json:"steps"`
 			Seed             uint64          `json:"seed"`
 			Model            string          `json:"model"`
+			TextQuantization string          `json:"text_quantization"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&request); err != nil {
 			http.Error(w, "invalid JSON", 400)
@@ -481,16 +694,28 @@ func main() {
 		if request.Model == "" {
 			request.Model = "smplx-rp-v1"
 		}
+		if request.TextQuantization == "" {
+			request.TextQuantization = "q8_0"
+		}
 		model, ok := g.models[request.Model]
 		if !ok || !model.Available {
 			http.Error(w, "selected motion model is not available: "+model.Reason, http.StatusConflict)
+			return
+		}
+		text, ok := g.textBundles[request.TextQuantization]
+		if !ok {
+			http.Error(w, "unknown text quantization", http.StatusBadRequest)
+			return
+		}
+		if !text.Available {
+			http.Error(w, "selected text quantization is not available: "+text.Reason, http.StatusConflict)
 			return
 		}
 		totalFrames := 0
 		for _, segment := range request.Segments {
 			totalFrames += segment.Frames
 		}
-		a := &animation{ID: token(), Prompt: request.Segments[0].Prompt, Frames: totalFrames, DiffusionSteps: request.Steps, Seed: request.Seed, CreatedAt: time.Now().UTC().Format(time.RFC3339), Status: "queued", Kind: "generated", Model: request.Model, Segments: request.Segments, TransitionFrames: request.TransitionFrames}
+		a := &animation{ID: token(), Prompt: request.Segments[0].Prompt, Frames: totalFrames, DiffusionSteps: request.Steps, Seed: request.Seed, CreatedAt: time.Now().UTC().Format(time.RFC3339), Status: "queued", Kind: "generated", Model: request.Model, TextQuantization: request.TextQuantization, Segments: request.Segments, TransitionFrames: request.TransitionFrames}
 		g.mu.Lock()
 		g.items[a.ID] = a
 		err := g.save(a)

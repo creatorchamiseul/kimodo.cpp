@@ -1,5 +1,9 @@
 # kimodo.cpp
 
+**Brought to you by the [LocalAI](https://github.com/mudler/LocalAI) team**, the folks behind LocalAI, the open-source AI engine that runs any model (LLMs, vision, voice, image, video) on any hardware, no GPU required.
+
+[![LocalAI](https://img.shields.io/badge/LocalAI-Run_Locally-orange)](https://github.com/mudler/LocalAI)
+
 GGML/C++ implementation of NVIDIA's Kimodo text-to-motion model.
 
 ## Status
@@ -19,9 +23,10 @@ default; set `KIMODO_TEXT_LAYER_CHUNK=1..32` to tune VRAM use.
 
 Included: checked GGUF loading, safetensors conversion, DDIM sampling, C/C++
 APIs, conditioned multi-prompt transitions, CPU/Vulkan parity tests,
-skeleton-only GLB export, and a local text-to-motion demo. General constraint
-input, 77-joint SOMA expansion, skinned-mesh GLB export, and quantised models
-are not implemented yet.
+skeleton-only GLB export, selective LLM2Vec quantisation, divergence reporting,
+and local generation/comparison viewers. General constraint input, 77-joint
+SOMA expansion, skinned-mesh GLB export, and motion-denoiser quantisation are
+not implemented yet.
 
 ## Build and test on Linux
 
@@ -65,7 +70,9 @@ to the process. The GGUF parser fuzzer requires Clang.
 ## API
 
 `include/kimodo/kimodo_capi.h` is the C API. Model loading checks the motion
-GGUF and text bundle before inference. Use `kimodo_generate_embedding` for
+GGUF and text model before inference. The text model can be a monolithic GGUF
+beside `tokenizer.gguf` or the legacy component directory. Use
+`kimodo_generate_embedding` for
 4096 F32 values or `kimodo_generate` for text. Both return the selected model's
 root translations and local XYZW rotations; query the joint count from the
 result rather than assuming a fixed skeleton.
@@ -79,13 +86,31 @@ go run ./demo -addr 0.0.0.0:8094
 ```
 
 Open `http://localhost:8094`. The left sidebar contains the prompt and a
-persistent history; choosing a previous animation restores its prompt for a
-new generation. Every successful animation also writes a standalone
+persistent history plus motion-model and text-encoder-quantization selectors;
+choosing a previous animation restores its prompt and encoder choice for a new
+generation. Every successful animation also writes a standalone
 `animation.glb` beside its raw streams, for example
 `demo-output/<animation-id>/animation.glb`. It contains the selected animated
 node hierarchy (no mesh), ready to copy into a Three.js project. It is also
 available from `/api/animations/<animation-id>/animation.glb` while the demo
 is running.
+
+The demo keeps all 32 layers of its default Q8 text encoder in VRAM for maximum
+throughput, while executing them as bounded eight-layer GGML graphs. Its 10 GiB
+residency ceiling makes the larger BF16 reference stream in bounded groups on a
+16 GiB GPU. Library and command-line callers retain the lower-memory eight-layer
+default; set `KIMODO_TEXT_LAYER_CHUNK=32` for residency and optionally set
+`KIMODO_TEXT_RESIDENT_LIMIT_MIB` to enforce a VRAM-safe bundle-size ceiling.
+The demo reuses one native worker while the selected motion model and text
+quantization remain unchanged, preserving both weight sets across requests.
+Profiling controls, measurements, and the next optimization targets are in
+[`docs/PROFILING.md`](docs/PROFILING.md).
+
+Quantisation comparisons produced by the workflow in
+[`docs/QUANTIZATION.md`](docs/QUANTIZATION.md) can be opened at
+`http://localhost:8094/compare`. Supply their parent directory with the demo's
+`--comparisons` option. The comparison view overlays every variant on a shared
+timeline and provides world-space and root-position-aligned modes.
 
 ## Weights
 
@@ -107,7 +132,11 @@ scripts/download_gguf_weights.sh --output "$PWD" \
   --model soma-rp-v1.1 --model g1-rp-v1
 ```
 
-The installer verifies each published manifest and SHA-256 hashes. Use
+Q8_0 is the default text encoder. Pass `--text-quantization` with `bf16`,
+`q8_0`, `q6_k`, `q5_k`, `q4_k`, or `q4_k_m` to install another level. Each
+level is one weight GGUF and all levels share `tokenizer.gguf`; the runtime can
+still selectively stream layer tensors from the monolith. The installer
+verifies each published manifest and SHA-256 hashes. Use
 `--motion-only` when supplying a precomputed 4096-float LLM2Vec embedding.
 SMPL-X RP is deliberately absent from the published-weight installer: its
 internal-R&D licence prohibits distributing derivative models, so it must be
@@ -159,6 +188,11 @@ Convert the local LLM2Vec model to the native component bundle with:
 nix develop path:. --command scripts/convert_llm2vec_bundle.sh \
   "$PWD/models/llama3-8b-instruct-base" "$PWD/generated/llm2vec-text-bundle"
 ```
+
+Quantize and pack the release variants as described in
+[`docs/QUANTIZATION.md`](docs/QUANTIZATION.md). `kmd-pack-text` streams tensor
+payloads between files, so creating the BF16 monolith does not require enough
+RAM to hold the complete encoder.
 
 Validate a prospective release without network access, then explicitly upload
 it from an account allowed to publish to `LocalAI-io`:

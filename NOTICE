@@ -5,3 +5,9 @@ https://github.com/ggml-org/ggml
 
 The demo displays the LocalAI logo from the LocalAI project:
 https://github.com/mudler/LocalAI
+
+The somaskel77 expansion assets and joint hierarchy
+(assets/skeletons/somaskel77, scripts/make_somaskel77_spec.py output) are
+derived from the Kimodo reference implementation, Copyright (c) 2026
+NVIDIA CORPORATION & AFFILIATES, licensed under the Apache License 2.0:
+https://github.com/nv-tlabs/kimodo

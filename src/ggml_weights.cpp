@@ -83,7 +83,12 @@ std::expected<std::unique_ptr<ggml_motion_weights>, std::string> ggml_motion_wei
     }();
     if (!force_cpu) {
         configure_vulkan_f32_parity();
-        if (ggml_backend_vk_get_device_count() > 0) result->backend_ = ggml_backend_vk_init(0);
+        // A Vulkan loader present with no usable driver throws from the
+        // device probe; that means "no GPU today", not "broken build", so
+        // fall through to the CPU path instead of aborting the load.
+        try {
+            if (ggml_backend_vk_get_device_count() > 0) result->backend_ = ggml_backend_vk_init(0);
+        } catch (...) { result->backend_ = nullptr; }
     }
 #endif
     if (!result->backend_) {

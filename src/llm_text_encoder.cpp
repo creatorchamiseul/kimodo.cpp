@@ -466,7 +466,11 @@ std::expected<std::unique_ptr<llm_text_encoder>, std::string> llm_text_encoder::
     auto result = std::unique_ptr<llm_text_encoder>(new llm_text_encoder);
     result->impl_ = std::make_unique<impl>();
 #if defined(KIMODO_HAVE_GGML_VULKAN)
-    if (use_vulkan() && ggml_backend_vk_get_device_count()) result->impl_->backend = ggml_backend_vk_init(0);
+    // Same as the motion weights: a probe that throws means no usable GPU,
+    // and the CPU fallback below keeps the encoder working.
+    try {
+        if (use_vulkan() && ggml_backend_vk_get_device_count()) result->impl_->backend = ggml_backend_vk_init(0);
+    } catch (...) { result->impl_->backend = nullptr; }
 #endif
     if (!result->impl_->backend) {
         result->impl_->backend = ggml_backend_cpu_init();

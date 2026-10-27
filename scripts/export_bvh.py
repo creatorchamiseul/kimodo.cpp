@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-"""Convert Kimodo raw motion float buffers (.f32) to standard BVH animation file for Unreal Engine / Blender."""
+"""Convert Kimodo raw motion float buffers (.f32) to standard BVH animation file for Unreal Engine / Blender.
+
+With --expand-hands the compact 30-joint output is widened to the official
+77-joint relaxed-hand skeleton (nv-tlabs/kimodo, Apache-2.0): the model's 30
+local rotations overwrite their slots in the relaxed-hand rest pose and the
+47 extra joints - finger chains, toe and head ends - hold the relaxed
+rotations, so hands carry a natural spread instead of collapsed stubs.
+"""
 
 import argparse
+import json
 import math
 import struct
 import sys
@@ -100,7 +108,19 @@ def build_bvh_hierarchy(names, parents, offsets, scale=100.0):
     write_joint(0)
     return "\n".join(lines)
 
-def convert_motion_to_bvh(motion_dir: Path, output_file: Path, fps=30.0, scale=100.0):
+def load_expansion_spec(path=None):
+    """The somaskel77 spec built by make_somaskel77_spec.py."""
+    if path is None:
+        path = Path(__file__).resolve().parent.parent / (
+            "assets/skeletons/somaskel77/somaskel77_expanded.json")
+    path = Path(path)
+    spec = json.loads(path.read_text(encoding="utf-8"))
+    assert spec["format"] == "somaskel77-expansion-v1", spec["format"]
+    return spec
+
+
+def convert_motion_to_bvh(motion_dir: Path, output_file: Path, fps=30.0, scale=100.0,
+                          expansion_spec=None):
     root_pos_file = motion_dir / "root_positions.f32"
     rot_file = motion_dir / "local_rotations_xyzw.f32"
 
@@ -117,7 +137,22 @@ def convert_motion_to_bvh(motion_dir: Path, output_file: Path, fps=30.0, scale=1
     positions = struct.unpack(f"{num_frames * 3}f", pos_bytes)
     rotations = struct.unpack(f"{num_frames * num_joints * 4}f", rot_bytes)
 
-    hierarchy = build_bvh_hierarchy(SOMA30_NAMES, SOMA30_PARENTS, SOMA30_OFFSETS, scale=scale)
+    if expansion_spec is None:
+        names, parents, offsets = SOMA30_NAMES, SOMA30_PARENTS, SOMA30_OFFSETS
+        # Per-frame rotation source: the file itself, joint for joint.
+        rest_quats = None
+        predicted_slots = None
+        source_joints = num_joints
+    else:
+        names = expansion_spec["names"]
+        parents = expansion_spec["parents"]
+        offsets = expansion_spec["offsets"]
+        rest_quats = expansion_spec["rest_rotations_xyzw"]
+        predicted_slots = expansion_spec["predicted_index_in_77"]
+        source_joints = len(SOMA30_NAMES)
+        num_joints = len(names)
+
+    hierarchy = build_bvh_hierarchy(names, parents, offsets, scale=scale)
 
     motion_lines = [
         "MOTION",
@@ -135,8 +170,12 @@ def convert_motion_to_bvh(motion_dir: Path, output_file: Path, fps=30.0, scale=1
 
         # Rotations for all joints
         for j in range(num_joints):
-            base = (f * num_joints + j) * 4
-            qx, qy, qz, qw = rotations[base:base+4]
+            if predicted_slots is not None and j not in predicted_slots:
+                qx, qy, qz, qw = rest_quats[j]
+            else:
+                source = j if predicted_slots is None else predicted_slots.index(j)
+                base = (f * source_joints + source) * 4
+                qx, qy, qz, qw = rotations[base:base+4]
             rz_deg, rx_deg, ry_deg = quat_to_euler_zxy(qx, qy, qz, qw)
             frame_tokens.extend([f"{rz_deg:.4f}", f"{rx_deg:.4f}", f"{ry_deg:.4f}"])
 
@@ -145,7 +184,8 @@ def convert_motion_to_bvh(motion_dir: Path, output_file: Path, fps=30.0, scale=1
     output_file.parent.mkdir(parents=True, exist_ok=True)
     bvh_content = hierarchy + "\n" + "\n".join(motion_lines) + "\n"
     output_file.write_text(bvh_content, encoding="utf-8")
-    print(f"Successfully exported {num_frames} frames to {output_file}")
+    print(f"Successfully exported {num_frames} frames to {output_file}"
+          + (f" ({len(names)} joints, hands expanded)" if expansion_spec else ""))
 
 def main():
     parser = argparse.ArgumentParser(description="Export Kimodo .f32 motion to BVH for Unreal Engine")
@@ -153,9 +193,15 @@ def main():
     parser.add_argument("--output", default="output_motion/animation.bvh", help="Output BVH file path")
     parser.add_argument("--fps", type=float, default=30.0, help="Target FPS (default: 30)")
     parser.add_argument("--scale", type=float, default=100.0, help="Unit scale from meters to cm (default: 100 for Unreal Engine)")
+    parser.add_argument("--expand-hands", action="store_true",
+                        help="Widen the 30 predicted joints to the 77-joint relaxed-hand skeleton")
+    parser.add_argument("--expansion-spec", default=None,
+                        help="Path to somaskel77_expanded.json (default: assets/skeletons/somaskel77/ in this repo)")
     args = parser.parse_args()
 
-    convert_motion_to_bvh(Path(args.motion_dir), Path(args.output), fps=args.fps, scale=args.scale)
+    spec = load_expansion_spec(args.expansion_spec) if args.expand_hands else None
+    convert_motion_to_bvh(Path(args.motion_dir), Path(args.output), fps=args.fps,
+                          scale=args.scale, expansion_spec=spec)
 
 if __name__ == "__main__":
     main()

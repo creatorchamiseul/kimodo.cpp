@@ -17,16 +17,20 @@ translations on CPU or Vulkan:
 - G1 RP/SEED v1: 34 Unitree G1 joints
 
 NVIDIA's Python API expands SOMA's predicted 30 joints to a relaxed-hand
-77-joint presentation skeleton. The native API currently returns the 30 joints
-the model actually predicts. The text encoder uses eight-layer Vulkan chunks by
-default; set `KIMODO_TEXT_LAYER_CHUNK=1..32` to tune VRAM use.
+77-joint presentation skeleton. The native API returns the 30 joints the
+model actually predicts; the expansion runs in the tools that consume it -
+`scripts/export_bvh.py --expand-hands` and the MotionForge add-on's
+"With Fingers" option - driven by `assets/skeletons/somaskel77/`, built from
+NVIDIA's Apache-2.0 assets by `scripts/make_somaskel77_spec.py`. The text
+encoder uses eight-layer Vulkan chunks by default; set
+`KIMODO_TEXT_LAYER_CHUNK=1..32` to tune VRAM use.
 
 Included: checked GGUF loading, safetensors conversion, DDIM sampling, C/C++
 APIs, conditioned multi-prompt transitions, CPU/Vulkan parity tests,
 skeleton-only GLB export, selective LLM2Vec quantisation, divergence reporting,
-and local generation/comparison viewers. General constraint input, 77-joint
-SOMA expansion, skinned-mesh GLB export, and motion-denoiser quantisation are
-not implemented yet.
+local generation/comparison viewers, and the 77-joint SOMA hand expansion for
+BVH and Blender output. General constraint input, skinned-mesh GLB export, and
+motion-denoiser quantisation are not implemented yet.
 
 ## Build and test on Linux
 

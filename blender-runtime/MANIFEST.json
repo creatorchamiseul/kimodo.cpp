@@ -5,58 +5,58 @@
   "files": [
     {
       "path": "kimodo.dll",
-      "bytes": 219136,
-      "sha256": "72fb02b98b4754f4ef5cbccf7a219affe7c387926b619dce6283c9d3bbc5fb9d"
+      "bytes": 271360,
+      "sha256": "c6fd36a13f3f69e674428be50cc7e8f145168db04ad52539ab2a11eaca1bcfd4"
     },
     {
       "path": "ggml.dll",
       "bytes": 67072,
-      "sha256": "fed0e908a38e730dc0bd3d10dea7128482cf381a278860a69a23f0d6ce0e2c86"
+      "sha256": "f71f7f614d5b332f5385f7d8ec97b90821c1433038982bc1954d0fcbadac87a8"
     },
     {
       "path": "ggml-base.dll",
       "bytes": 651776,
-      "sha256": "f653a76ebdad87893bf7f3c5dfbd830b21ed85d65536adc9e66c2a0088492361"
+      "sha256": "0e0f65e8b298f113ce79745bd1b570c3b7b58f25ae72d61205b5fd91e9b3fe67"
     },
     {
       "path": "ggml-cpu.dll",
       "bytes": 804352,
-      "sha256": "9161d608feda79615bc37488173d7f4731282d2032079d1f0ffc6f8e8100a8ae"
+      "sha256": "9fd437ae70b869e4846de181b28c8833ef9adf2162ffe70465d031977af8f0da"
     },
     {
       "path": "ggml-vulkan.dll",
       "bytes": 54322176,
-      "sha256": "50ded8474086f0a6f4b8a90e20b99239aea6d1a2466e21840c2ee9917ed2ef31"
+      "sha256": "7d5a1485eea1a49370429a894bac3e788eb1e15c10f34aeef26f6498baefcc1f"
     },
     {
       "path": "kmd-generate.exe",
-      "bytes": 62976,
-      "sha256": "a1d0248743e73396520d8af25e05528d75040523d6f2c56f8f2151d0f38c5ee0"
+      "bytes": 74240,
+      "sha256": "27605ef6e83c16b10a713311f1416eb22a257689428926fa1124ed44f247ff38"
     },
     {
       "path": "cpu-fallback/kimodo.dll",
-      "bytes": 218624,
-      "sha256": "33d5247797f5802748d4193e2a04762cf2bde54a1a01b8350e74b2df78c22714"
+      "bytes": 270848,
+      "sha256": "e365ef49ca878eb0484e8a458e01015f450d36e7655b8f1084bfbf55d73df2d0"
     },
     {
       "path": "cpu-fallback/ggml.dll",
       "bytes": 67072,
-      "sha256": "9c71c76bba29f2e032ef1a9e05eccc87e09093e5b7ffc032a208f49fc70e3c1d"
+      "sha256": "3c651d3381886e9c7c063653e9a53fa418c91e60f251eac035aa0e8bb58cccc6"
     },
     {
       "path": "cpu-fallback/ggml-base.dll",
       "bytes": 651776,
-      "sha256": "cf56b97c1dcf527f8bc7db33aceb6e70d2b828c4a2ed789d4c706c42ecb92842"
+      "sha256": "d75fd8034e36e5d7aa3bbefaa4e7f5301e3162246a9ec3ed978ee05a235bbb03"
     },
     {
       "path": "cpu-fallback/ggml-cpu.dll",
       "bytes": 804352,
-      "sha256": "3f08524642ca6686ac1e17a85ae18cf1adda87ff2a9b5342f6c5ad2ed9da4d1c"
+      "sha256": "26b4636fc1752ca728ae89acaabeda358855234bc6347830e341580a5839fd8f"
     },
     {
       "path": "cpu-fallback/kmd-generate.exe",
-      "bytes": 62464,
-      "sha256": "1a2221f9e47dc9acfaa1fea54d887baf4afa13f75a403d727a5454d2dee2c801"
+      "bytes": 73216,
+      "sha256": "4d8b3d5f411e0f1a0b1fc1ee7423f308ded8e18bf5b9a78bce7fbec12d1c73c5"
     }
   ]
 }
